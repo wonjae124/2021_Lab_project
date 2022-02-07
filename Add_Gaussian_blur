@@ -1,0 +1,393 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "name": "Untitled13.ipynb",
+      "provenance": [],
+      "collapsed_sections": [],
+      "authorship_tag": "ABX9TyPCrv1sLVIElUsXbN1Uzkzz",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/wonjae124/2021_Lab_project/blob/main/Add_Gaussian_blur\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive')\n",
+        "%cd /content/drive/MyDrive/model\n",
+        "!pwd"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "h7R3ZisHooiD",
+        "outputId": "d447efb1-3b51-433b-e6a8-b3434aa8c158"
+      },
+      "execution_count": 2,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Mounted at /content/drive\n",
+            "/content/drive/MyDrive/model\n",
+            "/content/drive/MyDrive/model\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 3,
+      "metadata": {
+        "id": "ChHnfP6rheQf"
+      },
+      "outputs": [],
+      "source": [
+        "import matplotlib.pyplot as plt\n",
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import random\n",
+        "import torch\n",
+        "import torchvision\n",
+        "from torchsummary import summary\n",
+        "from torchvision import datasets, transforms\n",
+        "from torch.utils.data import DataLoader, random_split\n",
+        "from torch import nn\n",
+        "import torch.optim as optim\n",
+        "from tqdm import tqdm\n",
+        "import skimage.util.noise as noise \n",
+        "import math\n",
+        "import pytorch_ssim"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "transform_Guassian_blur_weak = transforms.Compose = ([\n",
+        "      transforms.ToTensor(),\n",
+        "      transforms.GaussianBlur(kernel_size=3, sigma=(0.1))\n",
+        "     \n",
+        "])\n",
+        "\n",
+        "origin_tr_dataset = datasets.CIFAR10(root = './data', train=True,\n",
+        "                                  download=True, transform = transforms.ToTensor())\n",
+        "\n",
+        "origin_testset = datasets.CIFAR10(root = './data', train=True,\n",
+        "                                  download=True, transform = transforms.ToTensor())\n",
+        "\n",
+        "tr_dataset = datasets.CIFAR10(root = './data', train=True, \n",
+        "                             download = True, transform = transform_Guassian_blur_weak)\n",
+        "\n",
+        "test_dataset = datasets.CIFAR10(root = './data', train = False , \n",
+        "                             download = True, transform = transform_Guassian_blur_weak)\n",
+        "\n",
+        "tr_hat_subset, val_hat_subset = torch.utils.data.random_split(tr_dataset, [40000,10000], generator=torch.Generator().manual_seed(1))\n",
+        "tr_subset, val_subset = torch.utils.data.random_split(origin_tr_dataset, [40000,10000], generator=torch.Generator().manual_seed(1))\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "anJ657A3hj68",
+        "outputId": "081071e8-8b8d-4ece-dd0c-24a4a41a1574"
+      },
+      "execution_count": 28,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Files already downloaded and verified\n",
+            "Files already downloaded and verified\n",
+            "Files already downloaded and verified\n",
+            "Files already downloaded and verified\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "num_workers= 2\n",
+        "batch_size = 256"
+      ],
+      "metadata": {
+        "id": "aAMCiSf2q29q"
+      },
+      "execution_count": 30,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "tr_dataloader = DataLoader(tr_subset, batch_size = batch_size)\n",
+        "tr_hat_dataloader = DataLoader(tr_hat_subset, batch_size = batch_size)\n",
+        "valid_dataloader = DataLoader(val_subset, batch_size = batch_size)\n",
+        "valid_hat_dataloader = DataLoader(val_hat_subset, batch_size = batch_size)"
+      ],
+      "metadata": {
+        "id": "ynBvF0ouqxWD"
+      },
+      "execution_count": 29,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def get_psnr(input, output, max_val=1):\n",
+        "\n",
+        "    input = input.cpu().detach().numpy()\n",
+        "    output = output.cpu().detach().numpy()\n",
+        "    img_diff = output - input\n",
+        "    mse = np.mean(img_diff**2)\n",
+        "    \n",
+        "    if mse == 0:\n",
+        "      return 100\n",
+        "    else:\n",
+        "      psnr = 10 * math.log10( (max_val**2)/mse)\n",
+        "      return psnr"
+      ],
+      "metadata": {
+        "id": "NLWSMCQLql0F"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "len(tr_dataset)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "ilYfU_ySp4xS",
+        "outputId": "c07fa238-4ae7-4887-f96b-2fc1418612bc"
+      },
+      "execution_count": 11,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "50000"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 11
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "len(test_dataset)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "86u-pFxwqEpQ",
+        "outputId": "9ccb6c05-3177-43ac-ced9-03c5f53f9f48"
+      },
+      "execution_count": 13,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "10000"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 13
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# CIFAR 10은 32X32 이미지이므로 처음부터 다시 인코더 구조를 만들어보자. 오늘도 수고했다."
+      ],
+      "metadata": {
+        "id": "qMY-R3G2spdq"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class Encoder(nn.Module):   \n",
+        "\n",
+        "  def __init__(self, encoded_space_dim,fc2_input_dim): \n",
+        "    super().__init__()\n",
+        "\n",
+        "    self.encoder_cnn = nn.Sequential( \n",
+        "        \n",
+        "        #1, 28, 28 , 필터 크기 1X3X3, 필터 개수 4개\n",
+        "        nn.Conv2d(in_channels = 1,out_channels = 4, kernel_size = 3, stride = 1, padding = 1),\n",
+        "        nn.BatchNorm2d(4),     \n",
+        "        #4, 28, 28, = 엑티베이션 맵 크기(4개의 1,28,28)\n",
+        "        nn.ReLU(True), \n",
+        "\n",
+        "        nn.Conv2d(in_channels = 4,out_channels = 8, kernel_size = 3, stride = 2, padding = 1),\n",
+        "        #8, 14, 14임. 필터 크기 4X3X3, 필터 개수 8개(8개의 4X3X3)\n",
+        "        nn.BatchNorm2d(8),     \n",
+        "        nn.ReLU(True), \n",
+        "         \n",
+        "        nn.Conv2d(in_channels = 8,out_channels = 16,kernel_size = 3, stride=1, padding = 1), \n",
+        "        #16, 14, 14, 필터 크기 8X3X3, 필터 개수 16개\n",
+        "        nn.BatchNorm2d(16), \n",
+        "        nn.ReLU(True),\n",
+        "        \n",
+        "        nn.Conv2d(in_channels = 16,out_channels = 32,kernel_size = 3, stride=2, padding=0),\n",
+        "        #32, 6, 6\n",
+        "        nn.BatchNorm2d(32), \n",
+        "        nn.ReLU(True),\n",
+        "        \n",
+        "        nn.Conv2d(in_channels = 32, out_channels = 64, kernel_size = 3, stride=1, padding=1),\n",
+        "        #64, 6, 6\n",
+        "        nn.BatchNorm2d(64), \n",
+        "        nn.ReLU(True),\n",
+        "\n",
+        "        nn.Conv2d(in_channels = 64,out_channels = 128,kernel_size = 3, stride=2, padding=1),\n",
+        "        #128, 3, 3\n",
+        "        nn.BatchNorm2d(128), \n",
+        "        nn.ReLU(True)\n",
+        "\n",
+        "    )\n",
+        "\n",
+        "    self.flatten = nn.Flatten(start_dim=1) \n",
+        "    # 128 X 3 X 3 -> 1152\n",
+        "\n",
+        "    self.encoder_lin = nn.Sequential( \n",
+        "        nn.Linear(3*3*128,fc2_input_dim), #1152 -> 128\n",
+        "        nn.ReLU(True),\n",
+        "        nn.Linear(fc2_input_dim, encoded_space_dim) #128->4 \n",
+        "    )\n",
+        "\n",
+        "  def forward(self, x): #출력\n",
+        "    x = self.encoder_cnn(x) \n",
+        "    x = self.flatten(x)\n",
+        "    x = self.encoder_lin(x)\n",
+        "    return x"
+      ],
+      "metadata": {
+        "id": "RXnYADAap305"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "class Decoder(nn.Module): \n",
+        "                          \n",
+        "  def __init__(self, encoded_space_dim, fc2_input_dim):\n",
+        "    super().__init__() \n",
+        "    self.decoder_lin = nn.Sequential( \n",
+        "        nn.Linear(encoded_space_dim, fc2_input_dim), #4 -> 128\n",
+        "        nn.ReLU(True),\n",
+        "        nn.Linear(fc2_input_dim, 3*3*128), #128 -> 1152 \n",
+        "        nn.ReLU(True)\n",
+        "    )\n",
+        "\n",
+        "    self.unflatten = nn.Unflatten(dim=1, unflattened_size=(128,3,3))\n",
+        "     # 1152 -> 128,3,3   필터크기랑 동일. 필터개수 128개 사용 예정\n",
+        "\n",
+        "    self.decoder_conv = nn.Sequential(\n",
+        "        nn.ConvTranspose2d(in_channels = 128, out_channels = 64, kernel_size = 3,\n",
+        "        stride=2, padding=1, output_padding = 1),\n",
+        "        nn.BatchNorm2d(64),\n",
+        "        nn.ReLU(True),\n",
+        "        #64,6,6 , 필터크기 64X3X3, 필터 개수 64개 사용\n",
+        "\n",
+        "        nn.ConvTranspose2d(in_channels = 64, out_channels=32, kernel_size =3,\n",
+        "                           stride=1, padding=1, output_padding = 0),\n",
+        "        nn.BatchNorm2d(32),\n",
+        "        nn.ReLU(True),\n",
+        "        #32,6,6, 필터크기 32X3X3, 필터 개수 32개 사용 예정\n",
+        "\n",
+        "        nn.ConvTranspose2d(in_channels = 32, out_channels=16, kernel_size =3,\n",
+        "                           stride=2, padding=0, output_padding = 1),\n",
+        "        nn.BatchNorm2d(16),\n",
+        "        nn.ReLU(True),\n",
+        "        #16, 14,14이고 필터크기는 16X3X3으로 필터 개수 14개 사용 예정\n",
+        "\n",
+        "        nn.ConvTranspose2d(in_channels = 16, out_channels = 8, kernel_size=3, \n",
+        "       stride= 1, padding=1, output_padding=0), \n",
+        "        nn.BatchNorm2d(8),\n",
+        "        nn.ReLU(True),\n",
+        "        #8, 14, 14이고 필터 크기는 8개 사용 예정임\n",
+        "\n",
+        "        nn.ConvTranspose2d(in_channels = 8, out_channels =4,  kernel_size = 3,\n",
+        "        stride=2, padding=1, output_padding=1),\n",
+        "        #4, 28, 28\n",
+        "        nn.BatchNorm2d(4),\n",
+        "        nn.ReLU(True),\n",
+        "\n",
+        "        nn.ConvTranspose2d(in_channels=4, out_channels=1, kernel_size=3,\n",
+        "                           stride=1, padding =1, output_padding =0)\n",
+        "        #1, 28, 28\n",
+        "\n",
+        "        \n",
+        "    )\n",
+        "     \n",
+        "  def forward(self, x): \n",
+        "    x = self.decoder_lin(x)\n",
+        "    x = self.unflatten(x)\n",
+        "    x = self.decoder_conv(x)\n",
+        "    x = torch.sigmoid(x)#마지막에 sigmoid를 넣어서 원래의 이미지(단일 값)으로 복원한다.\n",
+        "    return x  "
+      ],
+      "metadata": {
+        "id": "OMwiwtgusaHD"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        ""
+      ],
+      "metadata": {
+        "id": "6DvcL08HsaQ_"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        ""
+      ],
+      "metadata": {
+        "id": "q-7q_j3RsaWw"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
